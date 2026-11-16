@@ -1,0 +1,98 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Terrain</title><link rel="manifest" href="manifest.json"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#0e2a3a">
+<style>
+:root{--bg:#eef3f5;--fg:#0e2a3a;--card:#fff;--ac:#ff7a1a;--ac2:#0e2a3a;--bd:#b9c9d2;--dg:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#0a1a24;--fg:#e9f1f5;--card:#12293a;--ac:#ff8a33;--ac2:#e9f1f5;--bd:#2c4658;--dg:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.4 system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+main{max-width:600px;margin:auto;padding:14px}h2{margin:.6em 0 .3em}h3{margin:.8em 0 .2em}
+button,select,input,textarea{font:inherit;width:100%;padding:14px;margin:5px 0;border-radius:10px;border:2px solid var(--bd);background:var(--card);color:var(--fg)}
+button{background:var(--ac);color:#1a0d00;border:0;font-weight:700;min-height:56px}button:disabled{opacity:.4}
+button.s{background:var(--card);color:var(--fg);border:2px solid var(--bd)}button.d{background:var(--dg);color:#fff}
+.c{background:var(--card);border:2px solid var(--bd);border-radius:10px;padding:10px;margin:8px 0}
+.id{position:sticky;top:0;z-index:2;background:var(--ac2);color:var(--bg);padding:10px;border-radius:10px;font:700 17px ui-monospace,monospace;text-align:center;word-break:break-all}
+label.k{display:flex;gap:10px;align-items:center;flex-wrap:wrap}label.k input{width:28px;height:28px;margin:0}
+.n{font-size:38px;font-weight:800}.g{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+img{width:30%;border-radius:8px;margin:2px}table{border-collapse:collapse;font-size:13px}td,th{border:1px solid var(--bd);padding:4px;text-align:left}.w{overflow-x:auto}code{font-size:14px;font-weight:700}
+</style></head><body><main></main>
+<script src="xlsx.mini.min.js"></script>
+<script>
+const $=s=>document.querySelector(s),ui=h=>{$('main').innerHTML=h;scrollTo(0,0)};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const idb=new Promise(r=>{const q=indexedDB.open('terrain',1);q.onupgradeneeded=()=>{q.result.createObjectStore('kv');q.result.createObjectStore('ph')};q.onsuccess=()=>r(q.result)});
+const tx=async(s,m,f)=>{const d=await idb;return new Promise((res,rej)=>{const t=d.transaction(s,m),o=f(t.objectStore(s));t.oncomplete=()=>res(o.result);t.onerror=()=>rej(t.error)})};
+const get=(s,k)=>tx(s,'readonly',o=>o.get(k)),put=(s,k,v)=>tx(s,'readwrite',o=>o.put(v,k)),rmk=(s,k)=>tx(s,'readwrite',o=>o.delete(k));
+const DEF={isl:'FK=Falklands\nSG=South Georgia\nSI=South Sandwich Islands\nBV=Bouvet Island\nTC=Tristan da Cunha',sp:'PC=Chinstrap\nPP=Papou\nPG=Gentoo\nPK=King\nPM=Magellan\nGM=Gorfou macaroni\nSK=Skuas\nPE=Petrels'};
+const SMP=[['PLU','Plumes'],['GUA','Guano'],['SWO','Swab oral'],['SWC','Swab cloacal'],['BLO','Sang']];
+let S={cfg:{...DEF},cols:[],cur:null},D,ei=-1,tmp=[];
+const lst=t=>t.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{const[a,...b]=l.split('=');return[a.trim(),(b.join('=')||a).trim()]});
+const save=()=>put('kv','S',S),col=()=>S.cols.find(c=>c.id===S.cur),pad=n=>String(n).padStart(3,'0');
+const now=()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');return{d:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`,t:`${p(d.getHours())}:${p(d.getMinutes())}`}};
+const nxt=(c,sp)=>Math.max(0,...c.inds.filter(x=>x.sp==sp).map(x=>x.n))+1;
+const on=x=>SMP.filter(s=>x.samples[s[0]]?.on);
+const gps=()=>new Promise(r=>navigator.geolocation?navigator.geolocation.getCurrentPosition(p=>r(p.coords.latitude.toFixed(6)+', '+p.coords.longitude.toFixed(6)),()=>r(''),{enableHighAccuracy:true,timeout:30000}):r(''));
+const pg=async()=>{const e=$('#g');e.value='';e.placeholder='Recherche GPS…';e.value=await gps();e.placeholder='GPS indisponible : saisir à la main'};
+const dl=(b,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),9e3)};
+const back=(f,t='← Retour')=>`<button class=s onclick="${f}()">${t}</button>`;
+
+const home=()=>{const c=col();ui(`<h1>Terrain</h1>${c?`<button onclick="star()">▶ Reprendre : ${c.isl}-${c.code} ${esc(c.name)}</button>`:''}<button onclick="newSt()">Nouvelle station</button><button class=s onclick="hist()">Historique</button><button class=s onclick="sett()">Réglages</button>`)};
+
+const newSt=()=>{if(col())return alert('Terminez d\'abord la colonie en cours.'),star();
+ui(`${back('home')}<h2>Nouvelle station</h2><b>Île</b><select id=i onchange="$('#io').hidden=this.value!='_'">${lst(S.cfg.isl).map(([a,b])=>`<option value=${a}>${a} – ${esc(b)}</option>`).join('')}<option value=_>Autre…</option></select><input id=io hidden placeholder="Code île (2 lettres)">
+<b>Colonie</b><input id=n placeholder="Nom de la colonie / lieu"><button class=s onclick="pg()">📍 Prendre le point GPS</button><input id=g placeholder="GPS lat, lon">
+<div class=c><b>Espèces présentes</b>${lst(S.cfg.sp).map(([a,b])=>`<label class=k><input type=checkbox value=${a}> ${a} – ${esc(b)}</label>`).join('')}<input id=so placeholder="Autres espèces (préciser)"></div>
+<textarea id=m placeholder="Commentaire"></textarea><button onclick="dem()">Démarrer l'échantillonnage</button>`)};
+
+const dem=()=>{const i=$('#i').value,isl=i=='_'?$('#io').value.trim().toUpperCase():i,nm=$('#n').value.trim();
+if(!isl||!nm)return alert('Île et nom de la colonie obligatoires.');
+const spp=[...document.querySelectorAll('.c input[type=checkbox]:checked')].map(x=>x.value),so=$('#so').value.trim();if(so)spp.push(so);
+if(!confirm(`Démarrer l'échantillonnage ?\n\nÎle : ${isl}\nColonie : ${nm}`))return;
+const t=now(),c={id:Date.now(),isl,code:pad(S.cols.filter(c=>c.isl==isl).length+1),name:nm,gps:$('#g').value,spp,comment:$('#m').value,start:t.d+' '+t.t,inds:[]};
+S.cols.push(c);S.cur=c.id;save();star()};
+
+const star=()=>{const c=col();if(!c)return home();const n={};c.inds.forEach(x=>n[x.sp]=(n[x.sp]||0)+1);
+ui(`<h2>⭐ ${c.isl}-${c.code} · ${esc(c.name)}</h2><div>Début : ${c.start}</div><div class=g>${[...new Set([...c.spp,...Object.keys(n)])].map(s=>`<div class=c>${esc(s)}<div class=n>${n[s]||0}</div></div>`).join('')}</div><div class=c>Total : <b>${c.inds.length}</b> individus</div>
+<button onclick="ni()">➕ Nouvel individu</button><button class=s onclick="edl()">✏️ Commenter action précédente</button><button class=s onclick="xl(col())">⬇ Exporter le tableau maintenant</button><button class=d onclick="fin()">Fin de l'échantillonnage sur cette colonie</button>${back('home','Accueil')}`)};
+
+const ni=()=>{ei=-1;const c=col();ui(`${back('star')}<div class=id>ID : ${c.isl}-${c.code}-TT-XXX-ZZZ</div><h2>Espèce</h2><select id=sp onchange="$('#so').hidden=this.value!='_'">${lst(S.cfg.sp).map(([a,b])=>`<option value=${a}>${a} – ${esc(b)}</option>`).join('')}<option value=_>Autre…</option></select><input id=so hidden placeholder="Code espèce"><button onclick="ni2()">Valider</button>`)};
+const ni2=()=>{let s=$('#sp').value;if(s=='_')s=$('#so').value.trim().toUpperCase();if(!s)return;D={sp:s,samples:{},gps:'',photos:[],comment:''};tmp=[];indForm()};
+
+const bk=()=>ei>=0?edl():ni();
+const rd=()=>{SMP.forEach(([k])=>D.samples[k]={on:$('#s_'+k).checked,c:$('#c_'+k).value});D.gps=$('#g').value;D.comment=$('#m').value};
+const indForm=()=>{const c=col(),b=`${c.isl}-${c.code}-${D.sp}-${pad(D.n||nxt(c,D.sp))}`,np=D.photos.length+tmp.length;
+ui(`${back('bk')}<div class=id>ID : ${b}-ZZZ</div><h3>Échantillons</h3>${SMP.map(([k,nm])=>{const s=D.samples[k]||{};return`<div class=c><label class=k><input type=checkbox id=s_${k} ${s.on?'checked':''} onchange="$('#c_${k}').hidden=!this.checked"> ${nm}<code>${b}-${k}</code></label><input id=c_${k} placeholder="Commentaire ${nm}" value="${esc(s.c)}" ${s.on?'':'hidden'}></div>`}).join('')}
+<h3>Point GPS</h3><button class=s onclick="pg()">📍 Prendre le point GPS</button><input id=g value="${esc(D.gps)}" placeholder="lat, lon">
+<h3>Photos (${np}/5)</h3><input type=file id=ph accept="image/*" capture=environment hidden onchange="addPh(this)"><button class=s ${np>=5?'disabled':''} onclick="$('#ph').click()">📷 Ajouter une photo</button><div>${tmp.map((x,i)=>`<img src="${URL.createObjectURL(x)}" onclick="rd();tmp.splice(${i},1);indForm()">`).join('')}</div>${tmp.length?'<small>Touchez une photo pour la retirer.</small>':''}
+<h3>Commentaire général</h3><textarea id=m>${esc(D.comment)}</textarea><button onclick="val()">Valider</button>`)};
+const shrink=async f=>{const b=await createImageBitmap(f),k=Math.min(1,1600/Math.max(b.width,b.height)),c=document.createElement('canvas');c.width=b.width*k;c.height=b.height*k;c.getContext('2d').drawImage(b,0,0,c.width,c.height);return new Promise(r=>c.toBlob(r,'image/jpeg',.8))};
+const addPh=async i=>{const f=i.files[0];if(!f)return;rd();tmp.push(await shrink(f));indForm()};
+const val=async()=>{rd();const c=col(),n=D.n||nxt(c,D.sp),b=`${c.isl}-${c.code}-${D.sp}-${pad(n)}`;
+if(!confirm(`Valider l'individu ${b} ?\nÉchantillons : ${on(D).map(s=>s[0]).join(', ')||'aucun'}\nPhotos : ${D.photos.length+tmp.length}`))return;
+for(const x of tmp){const nm=`${b}_${D.photos.length+1}.jpg`;await put('ph',nm,x);D.photos.push(nm)}
+tmp=[];D.n=n;D.id=b;if(ei<0)D.end=now();ei<0?c.inds.push(D):c.inds[ei]=D;await save();ei=-1;star()};
+
+const edl=()=>{const c=col();ui(`${back('star')}<h2>Individus (${c.inds.length})</h2>${c.inds.map((x,i)=>`<div class=c><b>${x.id}</b> · ${x.end.t}<br>${on(x).map(s=>s[0]).join(' ')||'aucun échantillon'} · ${x.photos.length} photo(s)<br><i>${esc(x.comment)}</i><div class=g><button class=s onclick="cm(${i})">💬 Commenter</button><button class=s onclick="mo(${i})">✏️ Modifier</button></div><button class=d onclick="rm(${i})">🗑 Supprimer</button></div>`).reverse().join('')}`)};
+const cm=i=>{const x=col().inds[i],t=prompt('Commentaire :',x.comment);if(t!==null){x.comment=t;save();edl()}};
+const mo=i=>{D=JSON.parse(JSON.stringify(col().inds[i]));ei=i;tmp=[];indForm()};
+const rm=async i=>{const c=col();if(!confirm('Supprimer '+c.inds[i].id+' ?'))return;const x=c.inds.splice(i,1)[0];for(const n of x.photos)await rmk('ph',n);await save();edl()};
+
+const fin=()=>{const c=col();ui(`${back('star','Annuler')}<h2>Fin de la colonie</h2><p>${c.isl}-${c.code} ${esc(c.name)} : ${c.inds.length} individus</p><textarea id=m placeholder="Commentaire général sur la colonie">${esc(c.gcomment)}</textarea><button class=d onclick="fin2()">Confirmer la fin</button>`)};
+const fin2=()=>{if(!confirm('Terminer cette colonie ? Le tableau sera créé et téléchargé.'))return;const c=col(),t=now();c.gcomment=$('#m').value;c.end=t.d+' '+t.t;S.cur=null;save();xl(c);hist()};
+
+const xl=c=>{const H=['ID','Île','Colonie','Espèce','GPS','Date','Heure fin','Échantillons','Codes tubes','Commentaires échantillons','Photos','Commentaire'];
+const R=c.inds.map(x=>[x.id,c.isl,c.name,x.sp,x.gps,x.end.d,x.end.t,on(x).map(s=>s[1]).join('; '),on(x).map(s=>x.id+'-'+s[0]).join('; '),on(x).filter(s=>x.samples[s[0]].c).map(s=>s[0]+': '+x.samples[s[0]].c).join(' | '),x.photos.join('; '),x.comment]);
+const k={};c.inds.forEach(x=>k[x.sp]=(k[x.sp]||0)+1);
+const F=[['Île',c.isl],['Colonie',c.name],['Code colonie',c.isl+'-'+c.code],['GPS',c.gps],['Début',c.start],['Fin',c.end||'en cours'],['Espèces présentes',c.spp.join(', ')],['Individus échantillonnés',c.inds.length],...Object.entries(k).map(([a,v])=>['  '+a,v]),['Commentaire initial',c.comment],['Commentaire général',c.gcomment||'']];
+const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([H,...R]),'Individus');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(F),'Fiche colonie');
+dl(new Blob([XLSX.write(wb,{type:'array',bookType:'xlsx'})]),`${c.isl}-${c.code}_${c.name.replace(/\W+/g,'_')}.xlsx`)};
+
+const hist=()=>{const by={},sp={};let tot=0;S.cols.forEach(c=>{const b=by[c.isl]??={c:0,n:0};b.c++;b.n+=c.inds.length;tot+=c.inds.length;c.inds.forEach(x=>sp[x.sp]=(sp[x.sp]||0)+1)});const L=S.cols[S.cols.length-1];
+ui(`${back('home')}<h2>Historique</h2>${L?`<button onclick="tbl(${L.id})">Voir le dernier tableau</button>`:'<p>Aucune colonie pour le moment.</p>'}<div class=c><b>Récapitulatif</b><br>${tot} échantillons · ${S.cols.length} colonies<br>${Object.entries(by).map(([k,v])=>`${k} : ${v.c} colonie(s), ${v.n} ind.`).join('<br>')}<br>${Object.entries(sp).map(([k,v])=>k+' '+v).join(' · ')}</div>
+${[...S.cols].reverse().map(c=>`<div class=c><b>${c.isl}-${c.code} ${esc(c.name)}</b><br>${c.start} · ${c.inds.length} ind.${c.end?'':' · en cours'}<div class=g><button class=s onclick="tbl(${c.id})">Tableau</button><button class=s onclick="xl(S.cols.find(x=>x.id==${c.id}))">⬇ xlsx</button></div><button class=s onclick="phs(${c.id})">⬇ Photos</button></div>`).join('')}`)};
+const tbl=id=>{const c=S.cols.find(x=>x.id==id);ui(`${back('hist')}<h3>${c.isl}-${c.code} ${esc(c.name)}</h3><div class=w><table><tr><th>ID<th>Esp.<th>Échant.<th>Heure<th>Photos<th>Comm.</tr>${c.inds.map(x=>`<tr><td>${x.id}<td>${x.sp}<td>${on(x).map(s=>s[0]).join(' ')}<td>${x.end.t}<td>${x.photos.length}<td>${esc(x.comment)}</tr>`).join('')}</table></div><div class=c>GPS : ${esc(c.gps)}<br>Espèces : ${esc(c.spp.join(', '))}<br>${esc(c.gcomment||c.comment)}</div>`)};
+const phs=async id=>{const c=S.cols.find(x=>x.id==id),fs=[];for(const x of c.inds)for(const n of x.photos){const b=await get('ph',n);if(b)fs.push(new File([b],n,{type:'image/jpeg'}))}
+if(!fs.length)return alert('Aucune photo.');if(navigator.canShare?.({files:fs})){try{return await navigator.share({files:fs,title:c.name})}catch(e){if(e.name=='AbortError')return}}
+fs.forEach((f,i)=>setTimeout(()=>dl(f,f.name),i*500))};
+
+const sett=()=>ui(`${back('home')}<h2>Réglages</h2><b>Îles (CODE=Nom)</b><textarea id=a rows=6>${esc(S.cfg.isl)}</textarea><b>Espèces (CODE=Nom)</b><textarea id=b rows=9>${esc(S.cfg.sp)}</textarea><button onclick="S.cfg.isl=$('#a').value;S.cfg.sp=$('#b').value;save();home()">Enregistrer</button><button class=s onclick="dl(new Blob([JSON.stringify(S)]),'sauvegarde_'+now().d+'.json')">⬇ Sauvegarde JSON (sans photos)</button>`);
+
+(async()=>{S=await get('kv','S')||S;navigator.storage?.persist?.();if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');home()})();
+</script></body></html>
